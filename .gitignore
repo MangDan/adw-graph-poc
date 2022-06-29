@@ -11,3 +11,6 @@ node_modules
 *.njsproj
 *.sln
 *.sw?
+
+commit.sh
+.gitignore
