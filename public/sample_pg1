@@ -1,5 +1,0 @@
-I :person name:"your name"
-You :person name:"my name"
-Graph :graph
-I -> Graph :say1 word:Hello date:today
-You -> I :say2 word:Goodbye date:yesterday
