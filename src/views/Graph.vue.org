@@ -1,0 +1,332 @@
+<template>
+  <v-main class="grey lighten-3">
+    <v-container fluid>
+      <v-row>
+        <v-col class="pt-0 mt-0">
+          <v-sheet min-height="78vh" rounded="lg">
+            <div style="height: 78vh; width: 98%;" id="blitzboard"></div>
+            <v-btn
+              @click="dialog = !dialog"
+              color="#c83b29"
+              absolute
+              fab
+              large
+              dark
+              bottom
+              right
+            >
+              <v-icon>mdi-chevron-up</v-icon>
+            </v-btn>
+          </v-sheet>
+        </v-col>
+      </v-row>
+
+      <v-dialog v-model="dialog" persistent max-width="500px">
+        <v-card>
+          <v-card-title>
+            <span class="text-h5">PG Query</span>
+          </v-card-title>
+          <v-card-text class="pa-0">
+            <v-container fluid class="pa-2">
+              <v-textarea
+                outlined
+                name="input-pg"
+                label="PG Query"
+                v-model="inputpg"
+                counter="6"
+              ></v-textarea>
+            </v-container>
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer></v-spacer>
+            <v-btn color="blue darken-1" text @click="redraw"> Submit </v-btn>
+            <v-btn color="blue darken-1" text @click="dialog = false">
+              Cancel
+            </v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
+    </v-container>
+  </v-main>
+</template>
+
+<script>
+export default {
+  name: "Graph",
+
+  data: () => ({
+    container: null,
+    blitzboard: null,
+    config: null,
+    graph: null,
+    inputpg: "",
+    dialog: false,
+    graphData: null,
+    graphItems: [
+      { text: "종목", value: "G_NH_STOCK" },
+      { text: "제품", value: "G_NH_PRODUCT" },
+      { text: "인물", value: "G_NH_PEOPLE" },
+      { text: "테마", value: "G_NH_THEME" },
+      // by iron - 기관 회사 이벤트 추가
+      { text: "기관", value: "G_NH_AGENT" },
+      { text: "회사", value: "G_NH_COMPANY" },
+      { text: "이벤트", value: "G_NH_EVENT" },
+    ]
+  }),
+  created() {
+    this.$EventBus.$on("cleanGraph", () => {
+      this.blitzboard.setGraph('');
+    });
+
+
+
+    
+
+
+    this.$EventBus.$on("initGraph", (config) => {
+      this.container = document.getElementById("blitzboard");
+      this.blitzboard = new Blitzboard(this.container); // no-undef
+      this.config = config;
+
+      // pg를 통해서 그래프 생성
+      this.blitzboard.setGraph("", false);
+      this.blitzboard.setConfig(this.config);
+
+      this.registerClickEventonGraph();
+
+    });
+
+    this.$EventBus.$on("querySubmit", (formData) => {
+      console.log(formData);
+      this.formData = formData;
+      let query = '';
+
+      // Graph만
+      // -- by iron query 수정     
+      if(this.formData.searchTerm === '') {
+        query += "SELECT * FROM MATCH (n1)-[e]-(n2) ";
+        query += "ON " + formData.graph + " ";
+        //query += "LIMIT 10";
+      } else {
+        query += "SELECT * FROM MATCH (n1)-[e]-(n2) ";
+        query += "ON " + formData.graph + " ";
+        //query += "WHERE n1.v_name = '" + formData.searchTerm + "' ";
+        query += "WHERE JAVA_REGEXP_LIKE(n1.v_name, '" + formData.searchTerm + "') "
+        //query += "LIMIT " + formData.limit;
+      }
+      if (this.formData.limit !== '') {
+        query += "LIMIT " + formData.limit ;
+      }
+      console.log(query);
+
+      this.$axios({
+        method: "get",
+        url:
+          "/ui/v1/query?pgql=" + encodeURI(query)   ,  // + "&graph=" + this.formData.graph,  -- by iron 
+        headers: { "Content-type": "application/json" },
+        withCredentials: true,
+        cossDomain: true,
+      }).then((response) => {
+        var nodes = [];
+        var edges = [];
+        let result = response.data;
+
+        result.graph.vertices.forEach((elem) => {
+          let node = {
+            id: elem._id,
+            labels: elem.l,
+            properties: {},
+          };
+          elem.p.forEach((elem_p) => {
+            if (elem_p.v) {
+              node.properties[elem_p.n] = [elem_p.v];
+            }
+          });
+          nodes.push(node);
+        });
+
+        result.graph.edges.forEach((elem) => {
+          let edge = {
+            id: elem._id,
+            from: elem.s,
+            to: elem.d,
+            labels: elem.l,
+            properties: {},
+          };
+          elem.p.forEach((elem_p) => {
+            if (elem_p.v) {
+              edge.properties[elem_p.n] = [elem_p.v];
+            }
+          });
+
+          edges.push(edge);
+        });
+
+        this.graphData = { nodes: nodes, edges: edges };
+        console.log(this.graphData);
+        this.blitzboard.setGraph(this.graphData, true);
+        this.blitzboard.setConfig(this.config);
+
+        this.registerClickEventonGraph();
+      });
+    });
+
+    this.$EventBus.$on("updateGraph", (config) => {
+      this.container = document.getElementById("blitzboard");
+      this.config = config;
+
+      // pg를 통해서 그래프 생성
+      this.blitzboard.setGraph(this.graph, false);
+      this.blitzboard.setConfig(this.config);
+
+      this.registerClickEventonGraph();
+    });
+  },
+  mounted() {
+  },
+  methods: {
+    registerClickEventonGraph() {
+      // 한번 클릭 시 해당 노드를 기준으로 쿼리
+      this.blitzboard.network.on("doubleClick", (e) => {
+        if (e.nodes.length > 0) {
+          let node = this.blitzboard.nodeMap[e.nodes[0]];
+
+          this.blitzboard.scrollNodeIntoView(node); // 해당 노드를 하이라이트하여 중앙으로 이동시킴
+
+          this.queryByNodeId(node);
+          
+        }
+      });
+
+      // 더블 클릭 시 속성값 가져오기
+      this.blitzboard.network.on("click", (e) => {
+        if (e.nodes.length > 0) {
+          let node = this.blitzboard.nodeMap[e.nodes[0]];
+          this.$EventBus.$emit("nodeClicked", node);
+        }
+
+        // if (e.edges.length > 0) {
+        //   let edge = this.blitzboard.edgeMap[e.edges[0]];
+        //   //console.log(edge);
+        // }
+      });
+    },
+    queryByNodeId(node) {
+      let graph = this.graphItems.filter(it => it.text.includes(node.labels[0]));
+
+      let query = ''
+      query += 'SELECT * FROM MATCH (n1)-[e]-(n2) ';
+      query += "ON " + graph[0].value + " ";
+      
+      //if(graph[0].value === 'G_NH_AGENT' || graph[0].value === 'G_NH_COMPANY' || graph[0].value === 'G_NH_EVENT') {
+      //  query += 'WHERE n1.id = \'' + node.id + '\' ';
+      //} else {
+        query += 'WHERE ID(n1) = \'' + node.id + '\' ';
+      //}
+
+      if (this.formData.limit !== '') {
+        query += "LIMIT " + this.formData.limit ;
+      }
+
+      console.log(query);
+
+      this.blitzboard.showLoader();
+
+      this.$axios({
+        method: "get",
+        url:
+          "/ui/v1/query?pgql=" + encodeURI(query),
+        headers: { "Content-type": "application/json" },
+        withCredentials: true,
+        cossDomain: true,
+      }).then((response) => {
+        let result = response.data;
+        // Nodes
+        result.graph.vertices.forEach((elem) => {
+          let node = {
+            id: elem._id,
+            labels: elem.l,
+            properties: {}
+          };
+          elem.p.forEach((elem_p) => {
+            if (elem_p.v) {
+              node.properties[elem_p.n] = [elem_p.v];
+            }
+          });
+          this.blitzboard.addNode(node, false);
+        });
+
+        // Edges
+        result.graph.edges.forEach((elem) => {
+          
+          // 여러번 클릭한 경우 동일한 엣지가 계속 생성되는 걸 방지...
+          //(!blitzboard.hasEdge(elem.s, elem.d)) {
+
+          let edge = {
+            id: elem._id,
+            from: elem.s,
+            to: elem.d,
+            labels: elem.l,
+            properties: {}
+          };
+          elem.p.forEach((elem_p) => {
+            if (elem_p.v) {
+              edge.properties[elem_p.n] = [elem_p.v];
+              //edge.properties['weight'] = '5.77876';
+            }
+          });
+          this.blitzboard.addEdge(edge, false);
+        });
+        // Update
+        this.blitzboard.update();
+        this.blitzboard.hideLoader();
+
+      });
+    },
+    redraw() {
+      this.graph = this.inputpg;
+
+      this.blitzboard.setGraph(this.graph, true);
+      this.blitzboard.setConfig(this.config);
+
+      
+
+      
+
+      this.dialog = !this.dialog;
+    },
+    reConfig() {
+      this.config = {
+        node: {
+          caption: ["id"],
+          defaultIcon: false,
+          icon: {
+            person: "akar-icons:person",
+            Property: "f38f",
+            Tax: "f119",
+            Account: "f119",
+            Income: "f316",
+          },
+          shape: {
+            person: "triangle",
+            graph: "square",
+          },
+          size: {
+            person: 10,
+          },
+        },
+        edge: {
+          caption: ["label"],
+          color: {
+            say1: "green",
+          },
+        },
+      };
+
+      // pg를 통해서 그래프 생성
+      this.blitzboard.setGraph(this.graph, false);
+      this.blitzboard.setConfig(this.config);
+    },
+  },
+};
+</script>
